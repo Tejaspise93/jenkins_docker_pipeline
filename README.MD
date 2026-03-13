@@ -337,7 +337,7 @@ Should show ✅ green tick on the ping event
 
 ## Dockerfile
 
-Add this file to the root of your Java project repository:
+Docker file in Java project repository:
 
 ```dockerfile
 FROM tomcat:8-jre8
@@ -359,7 +359,7 @@ pipeline {
         DOCKERHUB_REPO  = "<your-dockerhub-username>/myweb"
         SONAR_HOST_URL  = "http://${TOOLS_SERVER_IP}:9000"
         SONAR_TOKEN     = credentials('sonar-token')
-        GIT_REPO        = "https://github.com/Tejaspise93/my-app-java.git"
+        GIT_REPO        = "<your-github-repo-url>"
     }
 
     parameters {
