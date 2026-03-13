@@ -616,11 +616,8 @@ Pipeline 2 (`myweb-cd`) owns deployment. It pulls the latest image from Docker H
 
 **Custom Docker network** — `cicd-net` isolates app containers from unrelated containers and allows containers to address each other by name if needed in future.
 
-**`withSonarQubeEnv` wrapper** — Required for `waitForQualityGate` to work. The wrapper registers the analysis with the Jenkins pipeline context. Without it, Jenkins has no record of a SonarQube analysis happening and the Quality Gate stage throws an `IllegalStateException`.
-
 **SonarQube webhook** — Required for the Quality Gate to receive a callback from SonarQube instead of polling. Without it the pipeline times out waiting for the gate result.
 
-**Private IP for inter-server communication** — Jenkins and Tools Server communicate over the AWS private IP (`172.31.80.113`). The app is accessed from a browser using the Tools Server public IP on port 5000.
 
 ---
 
