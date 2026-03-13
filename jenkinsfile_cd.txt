@@ -1,0 +1,61 @@
+pipeline {
+    agent any
+
+    environment {
+        TOOLS_SERVER_IP = "172.31.80.113"
+        DOCKERHUB_REPO  = "tejaspise/myweb"
+        APP_PORT        = "5000"
+        CONTAINER_NAME  = "myweb"
+        NETWORK_NAME    = "cicd-net"
+    }
+    
+    stages {
+
+        stage('Deploy Container') {
+            steps {
+                sshagent(['tools-server-ssh-key']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ec2-user@${TOOLS_SERVER_IP} '
+                            docker pull ${DOCKERHUB_REPO}:latest &&
+                            docker stop ${CONTAINER_NAME} || true &&
+                            docker rm ${CONTAINER_NAME} || true &&
+                            docker run -d \
+                                --name ${CONTAINER_NAME} \
+                                --network ${NETWORK_NAME} \
+                                -p ${APP_PORT}:8080 \
+                                ${DOCKERHUB_REPO}:latest
+                        '
+                    """
+                }
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                sshagent(['tools-server-ssh-key']) {
+                    script {
+                        sleep(time: 15, unit: 'SECONDS')
+                        sh """
+                            ssh -o StrictHostKeyChecking=no ec2-user@${TOOLS_SERVER_IP} \
+                                'docker ps | grep ${CONTAINER_NAME}'
+                        """
+                    }
+                }
+            }
+        }
+
+    }
+
+    post {
+        success {
+            echo "--- Deployment successful ---"
+            echo "--- App live at: http://${TOOLS_SERVER_IP}:${APP_PORT}/myweb ---"
+        }
+        failure {
+            echo "--- Deployment failed ---"
+        }
+        always {
+            cleanWs()
+        }
+    }
+}

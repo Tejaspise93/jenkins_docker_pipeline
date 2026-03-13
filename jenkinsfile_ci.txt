@@ -89,4 +89,13 @@ pipeline {
         }
 
     }
+
+    post {
+        success {
+            build job: 'myweb-cd', wait: false
+        }
+        always {
+            cleanWs()
+        }
+    }
 }
