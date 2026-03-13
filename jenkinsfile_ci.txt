@@ -2,11 +2,11 @@ pipeline {
     agent any
 
     environment {
-        TOOLS_SERVER_IP = "172.31.80.113"
-        DOCKERHUB_REPO  = "tejaspise/myweb"
+        TOOLS_SERVER_IP = "<TOOLS-SERVER-PRIVATE-IP>"
+        DOCKERHUB_REPO  = "<your-dockerhub-username>/myweb"
         SONAR_HOST_URL  = "http://${TOOLS_SERVER_IP}:9000"
         SONAR_TOKEN     = credentials('sonar-token')
-        GIT_REPO        = "https://github.com/Tejaspise93/my-app-java.git"
+        GIT_REPO        = "<your-github-repo-url>"
     }
 
     parameters {
