@@ -67,5 +67,26 @@ pipeline {
             }
         }
 
+        stage('Docker Build & Push') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(
+                        credentialsId: 'dockerhub-creds',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )]) {
+                        sh """
+                            docker build -t ${DOCKERHUB_REPO}:${env.POM_VERSION} .
+                            docker tag ${DOCKERHUB_REPO}:${env.POM_VERSION} ${DOCKERHUB_REPO}:latest
+                            echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
+                            docker push ${DOCKERHUB_REPO}:${env.POM_VERSION}
+                            docker push ${DOCKERHUB_REPO}:latest
+                            docker rmi ${DOCKERHUB_REPO}:${env.POM_VERSION} ${DOCKERHUB_REPO}:latest
+                        """
+                    }
+                }
+            }
+        }
+
     }
 }
