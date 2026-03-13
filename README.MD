@@ -1,4 +1,4 @@
-# CI/CD Pipeline v2 — Jenkins + Maven + SonarQube + Docker Hub + Docker
+# CI/CD Pipeline — Jenkins + Maven + SonarQube + Docker Hub + Docker
 
 ## Overview
 
