@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project sets up a full CI/CD pipeline using Jenkins to automate building, testing, code quality analysis, Docker image creation, artifact storage on Docker Hub, and automated container deployment of a Java web application.
+This project sets up a full CI/CD pipeline using Jenkins to automate building, testing, code quality analysis, Docker image creation, and container deployment of a Java web application.
 
 The pipeline is split into two parts — a CI pipeline that builds and pushes the Docker image, and a CD pipeline that deploys the container to the Tools Server.
 
@@ -25,35 +25,24 @@ The pipeline is split into two parts — a CI pipeline that builds and pushes th
 | Maven | 3.x | Build, test, and package Java project |
 | SonarQube | 9.1.0 | Static code quality analysis |
 | Docker | Latest | Build and run containers |
-| Docker Hub | - | Container image registry (replaces Nexus) |
+| Docker Hub | - | Container image registry |
 | Java | 17 | Runtime for Jenkins and SonarQube |
 | Git | - | Source code management |
 | GitHub Webhook | - | Auto-trigger Jenkins on code push |
 
 ---
 
-## Jenkins Plugins Installed
+## Jenkins Plugins Required
 
 | Plugin | Purpose |
 |---|---|
-| **SonarQube Scanner** | Integrates SonarQube analysis into pipeline |
-| **Docker Pipeline** | Enables Docker commands inside Jenkins pipeline |
-| **SSH Agent** | Allows Jenkins to SSH into Tools Server for deployment |
+| SonarQube Scanner | Integrates SonarQube analysis into pipeline |
+| Docker Pipeline | Enables Docker commands inside Jenkins pipeline |
+| SSH Agent | Allows Jenkins to SSH into Tools Server for deployment |
 
-**How to install any plugin:**
-```
-Jenkins → Manage Jenkins → Plugins
-    ↓
-Available plugins tab
-    ↓
-Search plugin name → Check the box
-    ↓
-Click: Install
-    ↓
-Check: Restart Jenkins when installation is complete
-    ↓
-Verify: Installed plugins tab → search plugin name ✅
-```
+**How to install a plugin:**
+
+Jenkins -> Manage Jenkins -> Plugins -> Available plugins -> search plugin name -> check the box -> Install -> check "Restart Jenkins when installation is complete" -> verify under Installed plugins tab
 
 ---
 
@@ -61,33 +50,26 @@ Verify: Installed plugins tab → search plugin name ✅
 
 ### Docker Installation (Both Servers)
 
-Run the following on **both** the Jenkins Server and Tools Server:
+Run the following on both the Jenkins Server and Tools Server:
 
 ```bash
-# Install Docker
 sudo yum install -y docker
-
-# Start Docker service
 sudo systemctl start docker
-
-# Enable Docker on boot
 sudo systemctl enable docker
 
-# Add user to docker group (ec2-user on Tools Server, jenkins on Jenkins Server)
-sudo usermod -aG docker ec2-user       # Tools Server
-sudo usermod -aG docker jenkins        # Jenkins Server
+# Add the appropriate user to the docker group
+sudo usermod -aG docker ec2-user    # Tools Server
+sudo usermod -aG docker jenkins     # Jenkins Server
 
-# IMPORTANT: Log out and log back in for group change to take effect
+# Log out and back in for the group change to take effect
 exit
-# SSH back in, then verify
-docker run hello-world
 ```
 
-> **Note:** The group change only takes effect in a new session. If you run `docker` immediately after `usermod` without logging out, you will get a permission denied error on the Docker socket. This is expected — log out and back in to fix it.
+> **Note:** The group change only takes effect in a new session. Run `docker run hello-world` after logging back in to verify.
 
 ---
 
-### SSH Key Setup (Jenkins Server → Tools Server)
+### SSH Key Setup (Jenkins Server -> Tools Server)
 
 Jenkins needs passwordless SSH access to the Tools Server to deploy containers remotely.
 
@@ -98,67 +80,57 @@ ssh-keygen -t rsa -b 4096 -C "jenkins"
 ```
 
 This creates:
-```
-~/.ssh/id_rsa        ← private key (stays on Jenkins Server)
-~/.ssh/id_rsa.pub    ← public key (goes to Tools Server)
-```
+- `~/.ssh/id_rsa` — private key (stays on Jenkins Server)
+- `~/.ssh/id_rsa.pub` — public key (goes to Tools Server)
 
 **Step 2 — Copy public key to Tools Server:**
 ```bash
-# On Jenkins Server — print the public key
+# On Jenkins Server
 cat ~/.ssh/id_rsa.pub
 # Copy the output
 ```
 
-Then on Tools Server:
 ```bash
-# Switch to ec2-user first if you are logged in as root
+# On Tools Server
 su - ec2-user
-
-# Add the key
 vi ~/.ssh/authorized_keys
-# Append the Jenkins public key on a new line (do not delete existing keys)
+# Paste the Jenkins public key on a new line
 chmod 600 ~/.ssh/authorized_keys
 chmod 700 ~/.ssh
 ```
 
-**Step 3 — Test SSH connection:**
+**Step 3 — Test the connection:**
 ```bash
 # On Jenkins Server
 ssh ec2-user@<TOOLS-SERVER-PRIVATE-IP>
-# Should connect without password
+# Should connect without a password prompt
 ```
 
 **Step 4 — Add private key to Jenkins Credentials:**
+
 ```bash
-# On Jenkins Server — print the private key
+# On Jenkins Server
 cat ~/.ssh/id_rsa
-# Copy everything including BEGIN and END lines
+# Copy everything including the BEGIN and END lines
 ```
 
-```
-Jenkins → Manage Jenkins → Credentials → Global → Add Credentials
-    Kind:         SSH Username with private key
-    ID:           tools-server-ssh-key
-    Username:     ec2-user
-    Private Key:  Enter directly → paste the private key
-    Click: Save
-```
+Jenkins -> Manage Jenkins -> Credentials -> Global -> Add Credentials
+- Kind: SSH Username with private key
+- ID: tools-server-ssh-key
+- Username: ec2-user
+- Private Key: Enter directly -> paste the private key
+- Save
 
 ---
 
 ### Custom Docker Network (Tools Server)
 
-Create a custom bridge network so containers can communicate by name:
-
 ```bash
 docker network create --driver bridge cicd-net
-
-# Verify
 docker network ls
 ```
 
-> **Why a custom network:** Containers on a custom bridge network can reach each other by container name as a hostname. On the default bridge network you need hardcoded IPs. It also isolates your app containers from unrelated containers on the server.
+Containers on a custom bridge network can reach each other by container name. The default bridge network requires hardcoded IPs.
 
 ---
 
@@ -179,7 +151,7 @@ vi sonar.sh
 sh sonar.sh start
 sh sonar.sh status
 # Access at: http://<TOOLS-SERVER-IP>:9000
-# Default login: admin / admin (change on first login)
+# Default login: admin / admin (you will be forced to change this on first login)
 ```
 
 ---
@@ -196,132 +168,81 @@ mvn --version
 
 ## Configurations
 
-### SonarQube Configuration
+### SonarQube
 
-**Step 1 — Login to SonarQube:**
-```
-Browser → http://<TOOLS-SERVER-IP>:9000
-Username: admin
-Password: admin  (you will be forced to change this on first login)
-```
+**Step 1 — Generate an authentication token:**
 
-**Step 2 — Generate Authentication Token:**
-```
-Top right corner → My Account
-    ↓
-Security tab
-    ↓
-Generate Tokens section
-    Name: jenkins-token
-    Type: User Token
-    Click: Generate
-    ↓
-COPY THE TOKEN IMMEDIATELY — it is shown only once
-```
+SonarQube -> top right corner -> My Account -> Security tab -> Generate Tokens -> set name to `jenkins-token`, type: User Token -> Generate
 
-**Step 3 — Add Token to Jenkins:**
-```
-Jenkins → Manage Jenkins → Credentials → Global → Add Credentials
-    Kind:        Secret text
-    Secret:      <paste the token>
-    ID:          sonar-token
-    Description: SonarQube Auth Token
-    Click: Save
-```
+Copy the token immediately — it is shown only once.
 
-**Step 4 — Configure SonarQube Server in Jenkins:**
-```
-Jenkins → Manage Jenkins → Configure System
-    ↓
-Scroll to: SonarQube servers
-    ↓
-Check: ✅ Enable injection of SonarQube server configuration as build environment variables
-    ↓
-Click: Add SonarQube
-    Name:              SonarQube
-    Server URL:        http://<TOOLS-SERVER-IP>:9000
-    Server auth token: sonar-token
-    Click: Save
-```
+**Step 2 — Add token to Jenkins:**
 
-**Step 5 — Configure SonarQube Webhook:**
+Jenkins -> Manage Jenkins -> Credentials -> Global -> Add Credentials
+- Kind: Secret text
+- Secret: paste the token
+- ID: sonar-token
+- Save
 
-This is required for the Quality Gate stage to work. Without the webhook, SonarQube never notifies Jenkins that analysis is complete and the pipeline will time out waiting.
+**Step 3 — Configure SonarQube server in Jenkins:**
 
-```
-SonarQube → Administration → Configuration → Webhooks
-    ↓
-Create
-    Name:   jenkins
-    URL:    http://<JENKINS-SERVER-PUBLIC-IP>:8080/sonarqube-webhook/
-    ↓
-Save
-```
+Jenkins -> Manage Jenkins -> Configure System -> SonarQube servers -> Add SonarQube
+- Name: SonarQube
+- Server URL: http://<TOOLS-SERVER-IP>:9000
+- Server auth token: sonar-token
+- Check: Enable injection of SonarQube server configuration as build environment variables
+- Save
 
-> **Note:** Use the PUBLIC IP of your Jenkins server in the webhook URL. SonarQube calls back to Jenkins over the network, so it needs the public IP.
+**Step 4 — Configure SonarQube webhook:**
+
+This is required for the Quality Gate stage to work. Without it, SonarQube never notifies Jenkins that analysis is complete and the pipeline will time out.
+
+SonarQube -> Administration -> Configuration -> Webhooks -> Create
+- Name: jenkins
+- URL: http://<JENKINS-SERVER-PUBLIC-IP>:8080/sonarqube-webhook/
+- Save
+
+> **Note:** Use the public IP of the Jenkins server in the webhook URL. SonarQube calls back to Jenkins over the network.
 
 ---
 
-### Docker Hub Configuration
+### Docker Hub
 
-**Step 1 — Create Docker Hub account and repository:**
-```
-hub.docker.com → Sign up
-    ↓
-Create repository
-    Name: myweb
-    Visibility: Public
-```
+**Step 1 — Create a Docker Hub account and repository:**
+
+hub.docker.com -> Sign up -> Create repository -> name it `myweb`, visibility: Public
 
 **Step 2 — Add Docker Hub credentials to Jenkins:**
-```
-Jenkins → Manage Jenkins → Credentials → Global → Add Credentials
-    Kind:        Username with password
-    Username:    <your dockerhub username>
-    Password:    <your dockerhub password>
-    ID:          dockerhub-creds
-    Description: Docker Hub credentials
-    Click: Save
-```
+
+Jenkins -> Manage Jenkins -> Credentials -> Global -> Add Credentials
+- Kind: Username with password
+- Username: your Docker Hub username
+- Password: your Docker Hub password
+- ID: dockerhub-creds
+- Save
 
 ---
 
-### GitHub Webhook Configuration
+### GitHub Webhook
 
 **Step 1 — Enable webhook trigger in Jenkins:**
-```
-Jenkins → myweb-ci → Configure
-    ↓
-Build Triggers section
-    ↓
-Check: ✅ GitHub hook trigger for GITScm polling
-    ↓
-Save
-```
+
+Jenkins -> myweb-ci -> Configure -> Build Triggers -> check "GitHub hook trigger for GITScm polling" -> Save
 
 **Step 2 — Add webhook in GitHub:**
-```
-GitHub → Repository → Settings → Webhooks → Add webhook
-    ↓
-Payload URL:  http://<JENKINS-SERVER-PUBLIC-IP>:8080/github-webhook/
-Content type: application/json
-Secret:       (leave empty)
-Events:       ✅ Just the push event
-Active:       ✅ checked
-    ↓
-Click: Add webhook
-```
+
+GitHub -> Repository -> Settings -> Webhooks -> Add webhook
+- Payload URL: http://<JENKINS-SERVER-PUBLIC-IP>:8080/github-webhook/
+- Content type: application/json
+- Events: Just the push event
+- Active: checked
+- Add webhook
 
 > **Note:** The trailing slash in `/github-webhook/` is required. Port 8080 must be open in the Jenkins Server security group.
 
 **Step 3 — Verify webhook delivery:**
-```
-GitHub → Repository → Settings → Webhooks
-    ↓
-Click your webhook → Recent Deliveries
-    ↓
-Should show ✅ green tick on the ping event
-```
+
+GitHub -> Repository -> Settings -> Webhooks -> click your webhook -> Recent Deliveries — should show a green tick on the ping event.
 
 ---
 
@@ -329,26 +250,26 @@ Should show ✅ green tick on the ping event
 
 | Credential ID | Kind | Used For |
 |---|---|---|
-| `sonar-token` | Secret text | SonarQube authentication |
-| `dockerhub-creds` | Username with password | Docker Hub push and pull |
-| `tools-server-ssh-key` | SSH Username with private key | SSH into Tools Server for deployment |
+| sonar-token | Secret text | SonarQube authentication |
+| dockerhub-creds | Username with password | Docker Hub push and pull |
+| tools-server-ssh-key | SSH Username with private key | SSH into Tools Server for deployment |
 
 ---
 
 ## Dockerfile
 
-Docker file in Java project repository:
+Place this in the root of the Java project repository:
 
 ```dockerfile
 FROM tomcat:8-jre8
 COPY target/*.war /usr/local/tomcat/webapps/myweb.war
 ```
 
-The WAR is renamed to `myweb.war` explicitly so Tomcat always deploys it at `/myweb` regardless of the version number in the filename.
+The WAR is renamed to `myweb.war` so Tomcat always deploys it at `/myweb` regardless of the version number in the filename.
 
 ---
 
-## Pipeline 1 — myweb-ci (CI Pipeline)
+## Pipeline 1 — myweb-ci
 
 ```groovy
 pipeline {
@@ -456,7 +377,7 @@ pipeline {
 
 ---
 
-## Pipeline 2 — myweb-cd (CD Pipeline)
+## Pipeline 2 — myweb-cd
 
 ```groovy
 pipeline {
@@ -526,23 +447,23 @@ pipeline {
 
 ## Pipeline Stage Breakdown
 
-### Pipeline 1 — myweb-ci
+### myweb-ci
 
 | Stage | What It Does |
 |---|---|
-| **Git Checkout** | Pulls code from GitHub on the specified branch. Reads `pom.xml` to extract project version and stores it as `env.POM_VERSION` for all downstream stages. |
-| **Build** | Runs `mvn clean package -DskipTests` to compile and produce a `.war` file in `target/`. |
-| **Test** | Runs `mvn test` to execute all JUnit tests. Publishes surefire XML reports to Jenkins. Pipeline stops if any test fails. |
-| **SonarQube Analysis** | Scans code quality and sends the report to SonarQube. Must be wrapped in `withSonarQubeEnv` — without this wrapper the Quality Gate stage cannot find the analysis and will fail. |
-| **SonarQube Quality Gate** | Waits for SonarQube to evaluate the gate (max 5 minutes). Aborts pipeline if gate fails. Requires the SonarQube webhook to be configured, otherwise Jenkins times out waiting for the callback. |
-| **Docker Build & Push** | Builds the Docker image from Dockerfile, tags it with the version from `pom.xml` and as `latest`, pushes both tags to Docker Hub, then removes the local image to keep the Jenkins Server clean. |
+| Git Checkout | Pulls code from GitHub on the specified branch. Reads `pom.xml` to extract project version and stores it as `env.POM_VERSION`. |
+| Build | Runs `mvn clean package -DskipTests` to compile and produce a `.war` file in `target/`. |
+| Test | Runs `mvn test`. Publishes surefire XML reports to Jenkins. Pipeline stops if any test fails. |
+| SonarQube Analysis | Scans code quality and sends the report to SonarQube. Must use the `withSonarQubeEnv` wrapper — without it the Quality Gate stage cannot find the analysis. |
+| SonarQube Quality Gate | Waits up to 5 minutes for SonarQube to evaluate the gate. Aborts the pipeline if the gate fails. Requires the SonarQube webhook to be configured. |
+| Docker Build & Push | Builds the Docker image, tags it with the version from `pom.xml` and as `latest`, pushes both tags to Docker Hub, then removes the local image. |
 
-### Pipeline 2 — myweb-cd
+### myweb-cd
 
 | Stage | What It Does |
 |---|---|
-| **Deploy Container** | SSHes into Tools Server. Pulls latest image from Docker Hub. Stops and removes the old container if running. Starts new container on `cicd-net` network at port 5000. |
-| **Health Check** | Waits 15 seconds for container to fully start, then runs `docker ps` on the Tools Server to confirm the container is running. |
+| Deploy Container | SSHes into Tools Server. Pulls the latest image from Docker Hub. Stops and removes the old container. Starts the new container on `cicd-net` at port 5000. |
+| Health Check | Waits 15 seconds, then runs `docker ps` on the Tools Server to confirm the container is running. |
 
 ---
 
@@ -550,89 +471,73 @@ pipeline {
 
 ```
 Developer pushes code to GitHub
-            ↓
-GitHub sends webhook to Jenkins (automatic)
-            ↓
-    [myweb-ci Stage 1] Git Checkout
-        → pulls branch: params.BRANCH
-        → extracts version from pom.xml → stored as env.POM_VERSION
-            ↓
-    [myweb-ci Stage 2] Build
-        → mvn clean package
-        → generates target/myweb-x.x.x.war
-            ↓
-    [myweb-ci Stage 3] Test
-        → mvn test
-        → JUnit tests must pass
-        → surefire reports published to Jenkins
-            ↓
-    [myweb-ci Stage 4] SonarQube Analysis
-        → withSonarQubeEnv wrapper registers the analysis
-        → scans code quality
-        → report sent to Tools Server:9000
-            ↓
-    [myweb-ci Stage 5] SonarQube Quality Gate
-        → waits for SonarQube webhook callback
-        → pipeline aborts if gate fails
-            ↓
-    [myweb-ci Stage 6] Docker Build & Push
-        → builds image from Dockerfile
-        → tags: <your-dockerhub-username>/myweb:0.0.x and <your-dockerhub-username>/myweb:latest
-        → pushes both tags to Docker Hub
-        → removes local image
-            ↓
-    [myweb-ci Post] Triggers myweb-cd on success
-            ↓
-    [myweb-cd Stage 1] Deploy Container
-        → SSH into Tools Server
-        → docker pull <your-dockerhub-username>/myweb:latest
-        → stop and remove old container
-        → docker run on cicd-net port 5000
-            ↓
-    [myweb-cd Stage 2] Health Check
-        → wait 15 seconds
-        → docker ps confirms container running
-            ↓
-    App live at Tools Server:5000/myweb
+    |
+    v
+GitHub sends webhook to Jenkins
+    |
+    v
+[CI] Git Checkout
+    pulls branch, extracts version from pom.xml
+    |
+    v
+[CI] Build
+    mvn clean package -> target/myweb-x.x.x.war
+    |
+    v
+[CI] Test
+    mvn test -> JUnit results published to Jenkins
+    |
+    v
+[CI] SonarQube Analysis
+    scans code quality -> report sent to Tools Server:9000
+    |
+    v
+[CI] SonarQube Quality Gate
+    waits for webhook callback -> aborts if gate fails
+    |
+    v
+[CI] Docker Build & Push
+    builds image -> tags with version and latest -> pushes to Docker Hub
+    |
+    v
+[CI] post success -> triggers myweb-cd
+    |
+    v
+[CD] Deploy Container
+    SSH into Tools Server -> pull image -> stop old container -> run new container
+    |
+    v
+[CD] Health Check
+    wait 15s -> docker ps confirms container running
+    |
+    v
+App live at Tools Server:5000/myweb
 ```
 
 ---
 
-## Two-Pipeline Design
+## Design Decisions
 
-Pipeline 1 (`myweb-ci`) owns building, testing, and publishing the image. When it succeeds it triggers Pipeline 2 via the `build job: 'myweb-cd'` call in its `post { success }` block.
+**Docker Hub over Nexus** — Docker Hub is the natural registry for container images. The WAR is baked into the Docker image at build time so a separate artifact store is not needed.
 
-Pipeline 2 (`myweb-cd`) owns deployment. It pulls the latest image from Docker Hub and runs it on the Tools Server.
+**Two separate pipelines** — CI and CD have different concerns and failure modes. Keeping them separate makes each easier to debug and allows the CD pipeline to be re-run independently without rebuilding the image.
 
----
+**Pull from Docker Hub to deploy** — The Tools Server pulls the image from Docker Hub rather than receiving it directly from Jenkins. This validates the full chain — the image that was pushed is exactly what gets deployed.
 
-## Key Design Decisions
+**Custom Docker network** — `cicd-net` isolates app containers from unrelated ones and allows containers to address each other by name if needed.
 
-**Docker Hub over Nexus** — Docker Hub is the natural registry for container images. Nexus is removed since WAR files are no longer deployed directly — the WAR is baked into the Docker image at build time.
-
-**Two separate pipelines** — CI and CD have different concerns, different failure modes, and potentially different triggers or permissions. Keeping them separate makes each easier to debug and allows the CD pipeline to be re-run independently without rebuilding the image.
-
-**Pull from Docker Hub to deploy** — The Tools Server pulls the image from Docker Hub rather than receiving it directly from Jenkins. This validates the full chain — the image that was pushed to the registry is exactly what gets deployed, and the image is independently accessible for rollback or audit.
-
-**Custom Docker network** — `cicd-net` isolates app containers from unrelated containers and allows containers to address each other by name if needed in future.
-
-**SonarQube webhook** — Required for the Quality Gate to receive a callback from SonarQube instead of polling. Without it the pipeline times out waiting for the gate result.
-
+**SonarQube webhook** — Required for the Quality Gate to receive a callback from SonarQube. Without it the pipeline times out waiting for the gate result.
 
 ---
 
-## Suggested Improvements
+## Suggested Improvement
 
-The following improvements were identified but not implemented. They are documented here for future reference.
+Currently Pipeline 1 triggers Pipeline 2 via `build job: 'myweb-cd'` in its `post { success }` block, which means CI has knowledge of CD.
 
-### Move trigger to Pipeline 2 using upstream trigger
-
-Currently Pipeline 1 triggers Pipeline 2 via `build job: 'myweb-cd'` in its `post { success }` block. This means Pipeline 1 has knowledge of Pipeline 2, which creates a coupling between CI and CD.
-
-The better approach is to remove the trigger from Pipeline 1 entirely and configure Pipeline 2 to watch Pipeline 1 using the `upstream` trigger:
+A cleaner approach is to remove that trigger from Pipeline 1 and configure Pipeline 2 to watch Pipeline 1 using the `upstream` trigger:
 
 ```groovy
-// Add this to Pipeline 2 (myweb-cd)
+// Add to Pipeline 2 (myweb-cd)
 triggers {
     upstream(
         upstreamProjects: 'myweb-ci',
@@ -641,12 +546,9 @@ triggers {
 }
 ```
 
-And remove the `build job: 'myweb-cd'` from Pipeline 1's `post` block.
+This way Pipeline 1 has no knowledge of Pipeline 2. The CD pipeline owns the decision of when to deploy, and additional pipelines can watch Pipeline 1 independently without modifying it.
 
-This way Pipeline 1 has no knowledge of Pipeline 2. The CD pipeline owns the decision of when to deploy. This follows the single responsibility principle and is more scalable — additional pipelines can also watch Pipeline 1 independently without modifying it.
-
-> **Note:** The `upstream` trigger only activates after the pipeline has been run at least once manually. Run `myweb-cd` manually once after adding the trigger so Jenkins reads and registers it.
-
+> **Note:** Run `myweb-cd` manually once after adding the trigger so Jenkins reads and registers it.
 
 ---
 
@@ -654,20 +556,19 @@ This way Pipeline 1 has no knowledge of Pipeline 2. The CD pipeline owns the dec
 
 **SonarQube Dashboard:**
 ```
-http://<TOOLS-SERVER-IP>:9000 → Projects → myweb
+http://<TOOLS-SERVER-IP>:9000 -> Projects -> myweb
 ```
 
 **Docker Hub:**
 ```
-hub.docker.com → <your-dockerhub-username>/myweb → Tags
-→ should show: latest and version tag (e.g. 0.0.9)
+hub.docker.com -> <your-dockerhub-username>/myweb -> Tags
+should show: latest and version tag (e.g. 0.0.9)
 ```
 
-**Container running on Tools Server:**
+**Container on Tools Server:**
 ```bash
-# SSH into Tools Server
 docker ps
-# Should show myweb container running
+# myweb container should be running
 ```
 
 **Live Application:**
@@ -677,7 +578,7 @@ http://<TOOLS-SERVER-PUBLIC-IP>:5000/myweb
 
 **Webhook Deliveries:**
 ```
-GitHub → Repo → Settings → Webhooks → Recent Deliveries
+GitHub -> Repository -> Settings -> Webhooks -> Recent Deliveries
 ```
 
 ---
@@ -696,6 +597,6 @@ GitHub → Repo → Settings → Webhooks → Recent Deliveries
 
 - **Application:** myweb
 - **Group ID:** in.javahome
-- **Packaging:** WAR → Docker image
+- **Packaging:** WAR -> Docker image
 - **Docker Hub Repository:** tejaspise/myweb
 - **App Repository:** https://github.com/Tejaspise93/my-app-java
