@@ -2,11 +2,11 @@ pipeline {
     agent any
 
     environment {
-        TOOLS_SERVER_IP = "<TOOLS-SERVER-PRIVATE-IP>"
-        DOCKERHUB_REPO  = "<your-dockerhub-username>/myweb"
+        TOOLS_SERVER_IP = "xxx.xx.xx.xx"
+        DOCKERHUB_REPO  = "<docker repo>/myweb"
         SONAR_HOST_URL  = "http://${TOOLS_SERVER_IP}:9000"
         SONAR_TOKEN     = credentials('sonar-token')
-        GIT_REPO        = "<your-github-repo-url>"
+        GIT_REPO        = "<git hub repo>"
     }
 
     parameters {
@@ -92,7 +92,7 @@ pipeline {
 
     post {
         success {
-            build job: 'myweb-cd', wait: false
+            echo "--- Image upload successful ---"
         }
         always {
             cleanWs()

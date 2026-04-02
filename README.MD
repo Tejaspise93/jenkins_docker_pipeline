@@ -1,10 +1,10 @@
-# CI/CD Pipeline — Jenkins + Maven + SonarQube + Docker Hub + Docker
+# CI/CD Pipeline — Jenkins + Maven + SonarQube + Docker Hub + EKS
 
 ## Overview
 
-This project sets up a full CI/CD pipeline using Jenkins to automate building, testing, code quality analysis, Docker image creation, and container deployment of a Java web application.
+This project sets up a full CI/CD pipeline using Jenkins to automate building, testing, code quality analysis, Docker image creation, and deployment of a Java web application to AWS EKS.
 
-The pipeline is split into two parts — a CI pipeline that builds and pushes the Docker image, and a CD pipeline that deploys the container to the Tools Server.
+The pipeline is split into two parts — a CI pipeline that builds and pushes the Docker image, and a CD pipeline that deploys the container to EKS.
 
 ---
 
@@ -13,7 +13,8 @@ The pipeline is split into two parts — a CI pipeline that builds and pushes th
 | Server | Purpose |
 |---|---|
 | Jenkins Server | Jenkins, Maven, Docker |
-| Tools Server | SonarQube (port 9000), Docker, App Container (port 5000) |
+| Tools Server | SonarQube (port 9000) |
+| AWS EKS | Kubernetes cluster for application deployment |
 
 ---
 
@@ -26,6 +27,7 @@ The pipeline is split into two parts — a CI pipeline that builds and pushes th
 | SonarQube | 9.1.0 | Static code quality analysis |
 | Docker | Latest | Build and run containers |
 | Docker Hub | - | Container image registry |
+| kubectl | Latest | Kubernetes CLI for EKS deployments |
 | Java | 17 | Runtime for Jenkins and SonarQube |
 | Git | - | Source code management |
 | GitHub Webhook | - | Auto-trigger Jenkins on code push |
@@ -159,8 +161,8 @@ sh sonar.sh status
 ### Maven (Jenkins Server)
 
 ```bash
-sudo apt update
-sudo apt install -y maven
+sudo yum update
+sudo yum install -y maven
 mvn --version
 ```
 
@@ -188,7 +190,7 @@ Jenkins -> Manage Jenkins -> Credentials -> Global -> Add Credentials
 
 Jenkins -> Manage Jenkins -> Configure System -> SonarQube servers -> Add SonarQube
 - Name: SonarQube
-- Server URL: http://<TOOLS-SERVER-IP>:9000
+- Server URL: http://TOOLS-SERVER-IP:9000
 - Server auth token: sonar-token
 - Check: Enable injection of SonarQube server configuration as build environment variables
 - Save
@@ -199,7 +201,7 @@ This is required for the Quality Gate stage to work. Without it, SonarQube never
 
 SonarQube -> Administration -> Configuration -> Webhooks -> Create
 - Name: jenkins
-- URL: http://<JENKINS-SERVER-PUBLIC-IP>:8080/sonarqube-webhook/
+- URL: http://JENKINS-SERVER-PUBLIC-IP:8080/sonarqube-webhook/
 - Save
 
 > **Note:** Use the public IP of the Jenkins server in the webhook URL. SonarQube calls back to Jenkins over the network.
@@ -223,6 +225,77 @@ Jenkins -> Manage Jenkins -> Credentials -> Global -> Add Credentials
 
 ---
 
+### EKS Kubeconfig
+
+**Step 1 — Install AWS CLI on Jenkins Server:**
+
+```bash
+# Install AWS CLI v2
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
+
+# Verify installation
+aws --version
+```
+
+**Step 2 — Install kubectl on Jenkins Server:**
+
+```bash
+# Download the latest stable kubectl binary
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+
+# Make it executable and move to PATH
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin/kubectl
+
+# Verify installation
+kubectl version --client
+```
+
+**Step 3 — Configure AWS CLI credentials for the jenkins user:**
+
+Switch to the jenkins user and configure its AWS profile with an IAM user that has EKS access:
+
+```bash
+# Switch to the jenkins user
+sudo su - jenkins
+
+# Configure AWS credentials
+aws configure
+# AWS Access Key ID:     <your-access-key-id>
+# AWS Secret Access Key: <your-secret-access-key>
+# Default region name:   <your-region>   e.g. us-east-1
+# Default output format: json
+```
+
+This creates `~/.aws/credentials` and `~/.aws/config` under the jenkins user's home directory. Jenkins pipeline commands running as the jenkins user will automatically use these credentials.
+
+> **Note:** The IAM user must have at minimum the following permissions: `eks:DescribeCluster` and be mapped inside the EKS cluster's `aws-auth` ConfigMap. See Step 4.
+
+> **Note:** IAM user to EKS cluster mapping (`aws-auth` ConfigMap) is handled in Terraform. Ensure the jenkins IAM user is included in the `mapUsers` block in your Terraform EKS configuration before proceeding.
+
+**Step 4 — Generate the kubeconfig file as the jenkins user:**
+
+```bash
+# Still as the jenkins user
+aws eks update-kubeconfig --region <your-region> --name <your-cluster-name> --kubeconfig ~/kubeconfig
+
+# Verify cluster connectivity
+kubectl --kubeconfig=~/kubeconfig get nodes
+# Should list the EKS worker nodes as Ready
+```
+
+**Step 5 — Add kubeconfig to Jenkins Credentials:**
+
+Jenkins -> Manage Jenkins -> Credentials -> Global -> Add Credentials
+- Kind: Secret file
+- File: upload the `~/kubeconfig` file from the Jenkins server
+- ID: k8s-kubeconfig
+- Save
+
+---
+
 ### GitHub Webhook
 
 **Step 1 — Enable webhook trigger in Jenkins:**
@@ -232,7 +305,7 @@ Jenkins -> myweb-ci -> Configure -> Build Triggers -> check "GitHub hook trigger
 **Step 2 — Add webhook in GitHub:**
 
 GitHub -> Repository -> Settings -> Webhooks -> Add webhook
-- Payload URL: http://<JENKINS-SERVER-PUBLIC-IP>:8080/github-webhook/
+- Payload URL: http://JENKINS-SERVER-PUBLIC-IP:8080/github-webhook/
 - Content type: application/json
 - Events: Just the push event
 - Active: checked
@@ -252,196 +325,9 @@ GitHub -> Repository -> Settings -> Webhooks -> click your webhook -> Recent Del
 |---|---|---|
 | sonar-token | Secret text | SonarQube authentication |
 | dockerhub-creds | Username with password | Docker Hub push and pull |
-| tools-server-ssh-key | SSH Username with private key | SSH into Tools Server for deployment |
+| tools-server-ssh-key | SSH Username with private key | SSH into Tools Server |
+| k8s-kubeconfig | Secret file | kubectl access to EKS cluster |
 
----
-
-## Dockerfile
-
-Place this in the root of the Java project repository:
-
-```dockerfile
-FROM tomcat:8-jre8
-COPY target/*.war /usr/local/tomcat/webapps/myweb.war
-```
-
-The WAR is renamed to `myweb.war` so Tomcat always deploys it at `/myweb` regardless of the version number in the filename.
-
----
-
-## Pipeline 1 — myweb-ci
-
-```groovy
-pipeline {
-    agent any
-
-    environment {
-        TOOLS_SERVER_IP = "<TOOLS-SERVER-PRIVATE-IP>"
-        DOCKERHUB_REPO  = "<your-dockerhub-username>/myweb"
-        SONAR_HOST_URL  = "http://${TOOLS_SERVER_IP}:9000"
-        SONAR_TOKEN     = credentials('sonar-token')
-        GIT_REPO        = "<your-github-repo-url>"
-    }
-
-    parameters {
-        string(name: 'BRANCH', defaultValue: 'master', description: 'Branch to build')
-    }
-
-    stages {
-
-        stage('Git Checkout') {
-            steps {
-                git branch: "${params.BRANCH}",
-                    url: "${GIT_REPO}"
-                script {
-                    env.POM_VERSION = sh(
-                        script: "mvn help:evaluate -Dexpression=project.version -q -DforceStdout",
-                        returnStdout: true
-                    ).trim()
-                    echo "--- Detected Version: ${env.POM_VERSION} ---"
-                }
-            }
-        }
-
-        stage('Build') {
-            steps {
-                sh 'mvn clean package -DskipTests'
-            }
-        }
-
-        stage('Test') {
-            steps {
-                sh 'mvn test'
-            }
-            post {
-                always {
-                    junit '**/target/surefire-reports/*.xml'
-                }
-            }
-        }
-
-        stage('SonarQube Analysis') {
-            steps {
-                withSonarQubeEnv('SonarQube') {
-                    sh """
-                        mvn sonar:sonar \
-                            -Dsonar.projectKey=myweb \
-                            -Dsonar.host.url=${SONAR_HOST_URL} \
-                            -Dsonar.login=\$SONAR_TOKEN
-                    """
-                }
-            }
-        }
-
-        stage('SonarQube Quality Gate') {
-            steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
-                }
-            }
-        }
-
-        stage('Docker Build & Push') {
-            steps {
-                script {
-                    withCredentials([usernamePassword(
-                        credentialsId: 'dockerhub-creds',
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
-                    )]) {
-                        sh """
-                            docker build -t ${DOCKERHUB_REPO}:${env.POM_VERSION} .
-                            docker tag ${DOCKERHUB_REPO}:${env.POM_VERSION} ${DOCKERHUB_REPO}:latest
-                            echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
-                            docker push ${DOCKERHUB_REPO}:${env.POM_VERSION}
-                            docker push ${DOCKERHUB_REPO}:latest
-                            docker rmi ${DOCKERHUB_REPO}:${env.POM_VERSION} ${DOCKERHUB_REPO}:latest
-                        """
-                    }
-                }
-            }
-        }
-
-    }
-
-    post {
-        success {
-            build job: 'myweb-cd', wait: false
-        }
-        always {
-            cleanWs()
-        }
-    }
-}
-```
-
----
-
-## Pipeline 2 — myweb-cd
-
-```groovy
-pipeline {
-    agent any
-
-    environment {
-        TOOLS_SERVER_IP = "<TOOLS-SERVER-PRIVATE-IP>"
-        DOCKERHUB_REPO  = "<your-dockerhub-username>/myweb"
-        APP_PORT        = "5000"
-        CONTAINER_NAME  = "myweb"
-        NETWORK_NAME    = "cicd-net"
-    }
-
-    stages {
-
-        stage('Deploy Container') {
-            steps {
-                sshagent(['tools-server-ssh-key']) {
-                    sh """
-                        ssh -o StrictHostKeyChecking=no ec2-user@${TOOLS_SERVER_IP} '
-                            docker pull ${DOCKERHUB_REPO}:latest &&
-                            docker stop ${CONTAINER_NAME} || true &&
-                            docker rm ${CONTAINER_NAME} || true &&
-                            docker run -d \
-                                --name ${CONTAINER_NAME} \
-                                --network ${NETWORK_NAME} \
-                                -p ${APP_PORT}:8080 \
-                                ${DOCKERHUB_REPO}:latest
-                        '
-                    """
-                }
-            }
-        }
-
-        stage('Health Check') {
-            steps {
-                sshagent(['tools-server-ssh-key']) {
-                    script {
-                        sleep(time: 15, unit: 'SECONDS')
-                        sh """
-                            ssh -o StrictHostKeyChecking=no ec2-user@${TOOLS_SERVER_IP} \
-                                'docker ps | grep ${CONTAINER_NAME}'
-                        """
-                    }
-                }
-            }
-        }
-
-    }
-
-    post {
-        success {
-            echo "--- Deployment successful ---"
-            echo "--- App live at: http://${TOOLS_SERVER_IP}:${APP_PORT}/myweb ---"
-        }
-        failure {
-            echo "--- Deployment failed ---"
-        }
-        always {
-            cleanWs()
-        }
-    }
-}
-```
 
 ---
 
@@ -462,8 +348,10 @@ pipeline {
 
 | Stage | What It Does |
 |---|---|
-| Deploy Container | SSHes into Tools Server. Pulls the latest image from Docker Hub. Stops and removes the old container. Starts the new container on `cicd-net` at port 5000. |
-| Health Check | Waits 15 seconds, then runs `docker ps` on the Tools Server to confirm the container is running. |
+| Validate Inputs | Checks that `IMAGE_TAG` parameter is provided. Fails fast if it is empty. |
+| Checkout K8s Manifests | Clones the Git repo to retrieve `deployment.yaml` and `service.yaml`. |
+| Deploy to EKS | Uses `sed` to replace `IMAGE_TAG_PLACEHOLDER` in `deployment.yaml` with the actual version. Applies both manifests to EKS and waits for the rollout to complete (timeout: 300s). |
+| Verify Deployment | Prints pod status, service info, and full deployment details for confirmation. |
 
 ---
 
@@ -500,18 +388,31 @@ GitHub sends webhook to Jenkins
     builds image -> tags with version and latest -> pushes to Docker Hub
     |
     v
-[CI] post success -> triggers myweb-cd
+[CI] post success -> "--- Image upload successful ---"
+    (manually trigger myweb-cd with IMAGE_TAG parameter)
     |
     v
-[CD] Deploy Container
-    SSH into Tools Server -> pull image -> stop old container -> run new container
+[CD] Validate Inputs
+    checks IMAGE_TAG is provided
     |
     v
-[CD] Health Check
-    wait 15s -> docker ps confirms container running
+[CD] Checkout K8s Manifests
+    clones repo -> retrieves deployment.yaml and service.yaml
     |
     v
-App live at Tools Server:5000/myweb
+[CD] Deploy to EKS
+    sed replaces IMAGE_TAG_PLACEHOLDER -> kubectl apply -> rollout status
+    |
+    v
+[CD] Verify Deployment
+    pod status, service info, deployment describe
+    |
+    v
+[CD] post success
+    fetches LoadBalancer hostname -> echoes full app URL
+    App accessible at: http://<elb-hostname>/myweb
+
+    on failure -> kubectl rollout undo -> rollback to previous version
 ```
 
 ---
@@ -522,33 +423,15 @@ App live at Tools Server:5000/myweb
 
 **Two separate pipelines** — CI and CD have different concerns and failure modes. Keeping them separate makes each easier to debug and allows the CD pipeline to be re-run independently without rebuilding the image.
 
-**Pull from Docker Hub to deploy** — The Tools Server pulls the image from Docker Hub rather than receiving it directly from Jenkins. This validates the full chain — the image that was pushed is exactly what gets deployed.
+**IMAGE_TAG as a parameter** — The CD pipeline accepts the image version as a parameter rather than always deploying `latest`. This makes it possible to deploy a specific version or roll back to a previous one by re-running the pipeline with a known-good tag.
 
-**Custom Docker network** — `cicd-net` isolates app containers from unrelated ones and allows containers to address each other by name if needed.
+**IMAGE_TAG_PLACEHOLDER in manifests** — The `deployment.yaml` uses a placeholder that `sed` replaces at deploy time. This keeps the manifest file clean in source control and avoids committing version-specific values.
 
-**SonarQube webhook** — Required for the Quality Gate to receive a callback from SonarQube. Without it the pipeline times out waiting for the gate result.
+**Rollback on failure** — The CD pipeline's `post { failure }` block runs `kubectl rollout undo` automatically if the deploy fails, restoring the previous working version.
 
----
+**URL echoed on success** — The `post { success }` block queries the LoadBalancer hostname from the service and prints the full application URL so it is immediately visible in the build log.
 
-## Suggested Improvement
-
-Currently Pipeline 1 triggers Pipeline 2 via `build job: 'myweb-cd'` in its `post { success }` block, which means CI has knowledge of CD.
-
-A cleaner approach is to remove that trigger from Pipeline 1 and configure Pipeline 2 to watch Pipeline 1 using the `upstream` trigger:
-
-```groovy
-// Add to Pipeline 2 (myweb-cd)
-triggers {
-    upstream(
-        upstreamProjects: 'myweb-ci',
-        threshold: hudson.model.Result.SUCCESS
-    )
-}
-```
-
-This way Pipeline 1 has no knowledge of Pipeline 2. The CD pipeline owns the decision of when to deploy, and additional pipelines can watch Pipeline 1 independently without modifying it.
-
-> **Note:** Run `myweb-cd` manually once after adding the trigger so Jenkins reads and registers it.
+**EKS over Docker container deployment** — EKS provides rolling updates, self-healing, replica management, and a managed LoadBalancer, giving the application high availability and zero-downtime deployments.
 
 ---
 
@@ -561,19 +444,20 @@ http://<TOOLS-SERVER-IP>:9000 -> Projects -> myweb
 
 **Docker Hub:**
 ```
-hub.docker.com -> <your-dockerhub-username>/myweb -> Tags
-should show: latest and version tag (e.g. 0.0.9)
+hub.docker.com -> tejaspise/myweb -> Tags
+should show: latest and version tag (e.g. 8.2.12)
 ```
 
-**Container on Tools Server:**
+**EKS Pods:**
 ```bash
-docker ps
-# myweb container should be running
+kubectl get pods -l app=myweb -n default -o wide
+# Both pods should show STATUS: Running
 ```
 
 **Live Application:**
 ```
-http://<TOOLS-SERVER-PUBLIC-IP>:5000/myweb
+http://<elb-hostname>/myweb
+# ELB hostname is printed in the CD pipeline post success block
 ```
 
 **Webhook Deliveries:**
@@ -589,7 +473,7 @@ GitHub -> Repository -> Settings -> Webhooks -> Recent Deliveries
 |---|---|---|
 | Jenkins Server | 8080 | Jenkins UI and GitHub webhook receiver |
 | Tools Server | 9000 | SonarQube |
-| Tools Server | 5000 | Live application |
+| EKS LoadBalancer | 80 | Live application (myweb-service) |
 
 ---
 
@@ -599,4 +483,4 @@ GitHub -> Repository -> Settings -> Webhooks -> Recent Deliveries
 - **Group ID:** in.javahome
 - **Packaging:** WAR -> Docker image
 - **Docker Hub Repository:** tejaspise/myweb
-- **App Repository:** https://github.com/Tejaspise93/my-app-java
+- **App Repository:** https://github.com/Tejaspise93/myweb.git
