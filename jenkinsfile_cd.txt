@@ -19,7 +19,7 @@ pipeline {
             steps {
                 script {
                     if (!params.IMAGE_TAG?.trim()) {
-                        error "IMAGE_TAG parameter is required. Pass the version from pom.xml (e.g. 0.0.9)"
+                        error "IMAGE_TAG parameter is required."
                     }
                     echo "--- Deploying ${DOCKERHUB_REPO}:${params.IMAGE_TAG} to EKS ---"
                 }
