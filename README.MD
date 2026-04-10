@@ -40,7 +40,6 @@ The pipeline is split into two parts — a CI pipeline that builds and pushes th
 |---|---|
 | SonarQube Scanner | Integrates SonarQube analysis into pipeline |
 | Docker Pipeline | Enables Docker commands inside Jenkins pipeline |
-| SSH Agent | Allows Jenkins to SSH into Tools Server for deployment |
 
 **How to install a plugin:**
 
@@ -50,89 +49,23 @@ Jenkins -> Manage Jenkins -> Plugins -> Available plugins -> search plugin name 
 
 ## Server Setup
 
-### Docker Installation (Both Servers)
+### Docker Installation (Jenkins Server)
 
-Run the following on both the Jenkins Server and Tools Server:
+Run the following on the Jenkins Server:
 
 ```bash
 sudo yum install -y docker
 sudo systemctl start docker
 sudo systemctl enable docker
 
-# Add the appropriate user to the docker group
-sudo usermod -aG docker ec2-user    # Tools Server
-sudo usermod -aG docker jenkins     # Jenkins Server
+# Add jenkins user to the docker group
+sudo usermod -aG docker jenkins
 
 # Log out and back in for the group change to take effect
 exit
 ```
 
 > **Note:** The group change only takes effect in a new session. Run `docker run hello-world` after logging back in to verify.
-
----
-
-### SSH Key Setup (Jenkins Server -> Tools Server)
-
-Jenkins needs passwordless SSH access to the Tools Server to deploy containers remotely.
-
-**Step 1 — Generate SSH key pair on Jenkins Server:**
-```bash
-ssh-keygen -t rsa -b 4096 -C "jenkins"
-# Press Enter for all prompts (no passphrase)
-```
-
-This creates:
-- `~/.ssh/id_rsa` — private key (stays on Jenkins Server)
-- `~/.ssh/id_rsa.pub` — public key (goes to Tools Server)
-
-**Step 2 — Copy public key to Tools Server:**
-```bash
-# On Jenkins Server
-cat ~/.ssh/id_rsa.pub
-# Copy the output
-```
-
-```bash
-# On Tools Server
-su - ec2-user
-vi ~/.ssh/authorized_keys
-# Paste the Jenkins public key on a new line
-chmod 600 ~/.ssh/authorized_keys
-chmod 700 ~/.ssh
-```
-
-**Step 3 — Test the connection:**
-```bash
-# On Jenkins Server
-ssh ec2-user@<TOOLS-SERVER-PRIVATE-IP>
-# Should connect without a password prompt
-```
-
-**Step 4 — Add private key to Jenkins Credentials:**
-
-```bash
-# On Jenkins Server
-cat ~/.ssh/id_rsa
-# Copy everything including the BEGIN and END lines
-```
-
-Jenkins -> Manage Jenkins -> Credentials -> Global -> Add Credentials
-- Kind: SSH Username with private key
-- ID: tools-server-ssh-key
-- Username: ec2-user
-- Private Key: Enter directly -> paste the private key
-- Save
-
----
-
-### Custom Docker Network (Tools Server)
-
-```bash
-docker network create --driver bridge cicd-net
-docker network ls
-```
-
-Containers on a custom bridge network can reach each other by container name. The default bridge network requires hardcoded IPs.
 
 ---
 
@@ -325,9 +258,7 @@ GitHub -> Repository -> Settings -> Webhooks -> click your webhook -> Recent Del
 |---|---|---|
 | sonar-token | Secret text | SonarQube authentication |
 | dockerhub-creds | Username with password | Docker Hub push and pull |
-| tools-server-ssh-key | SSH Username with private key | SSH into Tools Server |
 | k8s-kubeconfig | Secret file | kubectl access to EKS cluster |
-
 
 ---
 
@@ -377,7 +308,7 @@ GitHub sends webhook to Jenkins
     |
     v
 [CI] SonarQube Analysis
-    scans code quality -> report sent to Tools Server:9000
+    scans code quality -> report sent to Tools Server:9000 via HTTP API
     |
     v
 [CI] SonarQube Quality Gate
@@ -483,4 +414,3 @@ GitHub -> Repository -> Settings -> Webhooks -> Recent Deliveries
 - **Group ID:** in.javahome
 - **Packaging:** WAR -> Docker image
 - **Docker Hub Repository:** tejaspise/myweb
-- **App Repository:** https://github.com/Tejaspise93/myweb.git
